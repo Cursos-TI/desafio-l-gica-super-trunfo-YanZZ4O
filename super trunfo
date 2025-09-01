@@ -1,0 +1,291 @@
+#include <stdio.h>
+#include <string.h>
+#include <ctype.h>
+
+/* ============================================================
+   Cartas de Cidades - Níveis: Novato, Aventureiro, Mestre
+   ------------------------------------------------------------
+   - Entrada: via terminal (scanf)
+   - Comparação: maior vence, exceto Densidade (menor vence)
+   - Novato: if / if-else simples
+   - Aventureiro: menu com switch + comparação aninhada
+   - Mestre: escolha de DOIS atributos + operadores ternários,
+             menus dinâmicos e tratamento de empates
+   ============================================================ */
+
+/* ------------------------ Tipos --------------------------- */
+
+typedef struct {
+    char estado[3];          // UF, ex: "SP"
+    char codigo[8];          // Código da carta, ex: "C01"
+    char cidade[64];         // Nome da cidade
+    double populacao;        // habitantes
+    double area;             // km^2
+    double pib;              // R$ bilhões (ou a unidade que escolher)
+    int pontosTuristicos;    // quantidade
+} Carta;
+
+typedef enum {
+    ATR_POPULACAO = 1,
+    ATR_AREA = 2,
+    ATR_PIB = 3,
+    ATR_PONTOS = 4,
+    ATR_DENSIDADE = 5
+} Atributo;
+
+/* -------------------- Assinaturas ------------------------- */
+void lerLinha(char *buf, size_t n);
+void cadastrarCarta(Carta *c);
+void exibirCarta(const Carta *c);
+double calcDensidade(const Carta *c);
+const char* nomeAtributo(Atributo a);
+int compararSimples(const Carta *a, const Carta *b, Atributo atr);          // Novato (if/if-else)
+int compararComFallback(const Carta *a, const Carta *b, Atributo pri, Atributo sec); // Aventureiro (aninhado)
+int compararDoisAtributosMestre(const Carta *a, const Carta *b, Atributo pri, Atributo sec); // Mestre (ternário + empates)
+void menuPrincipal();
+
+/* ============================================================
+   Util: leitura de linha segura (consome \n remanescente do scanf)
+   ============================================================ */
+void lerLinha(char *buf, size_t n) {
+    if (!fgets(buf, (int)n, stdin)) {
+        buf[0] = '\0';
+        return;
+    }
+    size_t len = strlen(buf);
+    if (len && buf[len - 1] == '\n') buf[len - 1] = '\0';
+}
+
+/* ============================================================
+   Cadastro interativo da carta
+   ============================================================ */
+void cadastrarCarta(Carta *c) {
+    printf("Estado (UF, ex: SP): ");
+    lerLinha(c->estado, sizeof(c->estado));
+
+    printf("Codigo da carta (ex: C01): ");
+    lerLinha(c->codigo, sizeof(c->codigo));
+
+    printf("Nome da cidade: ");
+    lerLinha(c->cidade, sizeof(c->cidade));
+
+    /* Valores numéricos com validação básica (não-negativos) */
+    do {
+        printf("Populacao (habitantes): ");
+        if (scanf("%lf", &c->populacao) != 1) { while (getchar()!='\n'); c->populacao = -1; }
+        while (getchar()!='\n'); // limpa buffer
+        if (c->populacao < 0) puts("Valor invalido. Tente novamente.");
+    } while (c->populacao < 0);
+
+    do {
+        printf("Area (km^2): ");
+        if (scanf("%lf", &c->area) != 1) { while (getchar()!='\n'); c->area = -1; }
+        while (getchar()!='\n');
+        if (c->area <= 0) puts("Area deve ser > 0. Tente novamente.");
+    } while (c->area <= 0);
+
+    do {
+        printf("PIB (use a unidade padrao do trabalho): ");
+        if (scanf("%lf", &c->pib) != 1) { while (getchar()!='\n'); c->pib = -1; }
+        while (getchar()!='\n');
+        if (c->pib < 0) puts("Valor invalido. Tente novamente.");
+    } while (c->pib < 0);
+
+    do {
+        printf("Pontos turisticos (inteiro >= 0): ");
+        if (scanf("%d", &c->pontosTuristicos) != 1) { while (getchar()!='\n'); c->pontosTuristicos = -1; }
+        while (getchar()!='\n');
+        if (c->pontosTuristicos < 0) puts("Valor invalido. Tente novamente.");
+    } while (c->pontosTuristicos < 0);
+}
+
+/* ============================================================
+   Exibir carta organizada
+   ============================================================ */
+void exibirCarta(const Carta *c) {
+    printf("\n-----------------------------------------\n");
+    printf("Carta %s - %s/%s\n", c->codigo, c->cidade, c->estado);
+    printf("Populacao: %.0f\n", c->populacao);
+    printf("Area: %.2f km^2\n", c->area);
+    printf("PIB: %.2f\n", c->pib);
+    printf("Pontos Turisticos: %d\n", c->pontosTuristicos);
+    printf("Densidade: %.2f hab/km^2\n", calcDensidade(c));
+    printf("-----------------------------------------\n");
+}
+
+double calcDensidade(const Carta *c) {
+    return c->populacao / c->area; // área já validada > 0
+}
+
+const char* nomeAtributo(Atributo a) {
+    switch (a) {
+        case ATR_POPULACAO: return "Populacao (maior vence)";
+        case ATR_AREA:      return "Area (maior vence)";
+        case ATR_PIB:       return "PIB (maior vence)";
+        case ATR_PONTOS:    return "Pontos Turisticos (maior vence)";
+        case ATR_DENSIDADE: return "Densidade (MENOR vence)";
+        default:            return "Atributo desconhecido";
+    }
+}
+
+/* ============================================================
+   NOVATO: comparação simples usando if / if-else
+   Retorno: 1 => A vence | -1 => B vence | 0 => empate
+   ============================================================ */
+int compararSimples(const Carta *a, const Carta *b, Atributo atr) {
+    double va = 0, vb = 0;
+    int menorVence = 0;
+
+    if (atr == ATR_POPULACAO) { va = a->populacao; vb = b->populacao; }
+    else if (atr == ATR_AREA) { va = a->area; vb = b->area; }
+    else if (atr == ATR_PIB) { va = a->pib; vb = b->pib; }
+    else if (atr == ATR_PONTOS) { va = a->pontosTuristicos; vb = b->pontosTuristicos; }
+    else if (atr == ATR_DENSIDADE) { va = calcDensidade(a); vb = calcDensidade(b); menorVence = 1; }
+
+    if (!menorVence) {
+        if (va > vb) return 1;
+        else if (vb > va) return -1;
+        else return 0;
+    } else {
+        if (va < vb) return 1;
+        else if (vb < va) return -1;
+        else return 0;
+    }
+}
+
+/* ============================================================
+   AVENTUREIRO: comparação aninhada (fallback)
+   - com base em um atributo principal e um secundário (desempate)
+   ============================================================ */
+int compararComFallback(const Carta *a, const Carta *b, Atributo pri, Atributo sec) {
+    int r = compararSimples(a, b, pri);
+    if (r != 0) return r;
+
+    /* Empate no principal -> comparar atributo secundário */
+    r = compararSimples(a, b, sec);
+    return r; /* pode ainda empatar (0) */
+}
+
+/* ============================================================
+   MESTRE: comparação de DOIS atributos com operadores ternários,
+   lógica encadeada e detecção de empates.
+   Regra: primeiro atributo decide; se empatar, vai para o segundo.
+   ============================================================ */
+int compararDoisAtributosMestre(const Carta *a, const Carta *b, Atributo pri, Atributo sec) {
+    int rPri = compararSimples(a, b, pri);
+    /* ternário para mensagem/fluxo (apenas para demonstrar o uso) */
+    rPri = (rPri > 0) ? 1 : (rPri < 0 ? -1 : 0);
+
+    if (rPri != 0) return rPri;
+
+    int rSec = compararSimples(a, b, sec);
+    rSec = (rSec > 0) ? 1 : (rSec < 0 ? -1 : 0);
+
+    return rSec; // pode ser 0 (empate real)
+}
+
+/* ============================================================
+   Menus
+   ============================================================ */
+void imprimirMenuAtributos(void) {
+    puts("\nEscolha o atributo:");
+    puts("1 - Populacao (maior vence)");
+    puts("2 - Area (maior vence)");
+    puts("3 - PIB (maior vence)");
+    puts("4 - Pontos Turisticos (maior vence)");
+    puts("5 - Densidade (MENOR vence)");
+    printf("Opcao: ");
+}
+
+Atributo lerAtributo() {
+    int op = 0;
+    do {
+        imprimirMenuAtributos();
+        if (scanf("%d", &op) != 1) { while (getchar()!='\n'); op = 0; }
+        while (getchar()!='\n');
+    } while (op < 1 || op > 5);
+    return (Atributo)op;
+}
+
+void menuNovato(const Carta *A, const Carta *B) {
+    puts("\n=== N I V E L  N O V A T O ===");
+    Atributo atr = lerAtributo();
+    printf("Comparando por: %s\n", nomeAtributo(atr));
+
+    int r = compararSimples(A, B, atr);
+    if (r > 0) printf("Vencedora: %s (%s) pela regra do atributo.\n", A->cidade, A->codigo);
+    else if (r < 0) printf("Vencedora: %s (%s) pela regra do atributo.\n", B->cidade, B->codigo);
+    else printf("Resultado: EMPATE no atributo selecionado.\n");
+}
+
+void menuAventureiro(const Carta *A, const Carta *B) {
+    puts("\n=== N I V E L  A V E N T U R E I R O ===");
+    puts("Escolha o atributo PRINCIPAL e depois o atributo SECUNDARIO (desempate).");
+    Atributo pri = lerAtributo();
+    Atributo sec = lerAtributo();
+    printf("Principal: %s | Secundario: %s\n", nomeAtributo(pri), nomeAtributo(sec));
+
+    int r = compararComFallback(A, B, pri, sec);
+    if (r > 0) printf("Vencedora (com fallback): %s (%s)\n", A->cidade, A->codigo);
+    else if (r < 0) printf("Vencedora (com fallback): %s (%s)\n", B->cidade, B->codigo);
+    else printf("Resultado: EMPATE mesmo apos o desempate.\n");
+}
+
+void menuMestre(const Carta *A, const Carta *B) {
+    puts("\n=== N I V E L  M E S T R E ===");
+    puts("Escolha DOIS atributos (ordem importa). O segundo sera usado se houver empate no primeiro.");
+    Atributo pri = lerAtributo();
+    Atributo sec = lerAtributo();
+    printf("Primeiro: %s | Segundo: %s\n", nomeAtributo(pri), nomeAtributo(sec));
+
+    int r = compararDoisAtributosMestre(A, B, pri, sec);
+    /* Exemplo de decisão final com ternário para mensagem */
+    const char *msg = (r > 0) ? "Vencedora (Mestre): %s (%s)\n"
+                      : (r < 0) ? "Vencedora (Mestre): %s (%s)\n"
+                                : "Resultado: EMPATE apos dois atributos.\n";
+    if (r > 0) printf(msg, A->cidade, A->codigo);
+    else if (r < 0) printf(msg, B->cidade, B->codigo);
+    else printf("%s", msg);
+}
+
+void menuPrincipal() {
+    puts("\n========================");
+    puts("1 - Nivel Novato");
+    puts("2 - Nivel Aventureiro");
+    puts("3 - Nivel Mestre");
+    puts("0 - Sair");
+    printf("Opcao: ");
+}
+
+/* ============================================================
+   MAIN
+   ============================================================ */
+int main(void) {
+    Carta A = {0}, B = {0};
+
+    puts("=== Cadastro da Carta A ===");
+    cadastrarCarta(&A);
+    puts("\n=== Cadastro da Carta B ===");
+    cadastrarCarta(&B);
+
+    puts("\n=== Cartas Cadastradas ===");
+    exibirCarta(&A);
+    exibirCarta(&B);
+
+    int opc = -1;
+    do {
+        menuPrincipal();
+        if (scanf("%d", &opc) != 1) { while (getchar()!='\n'); opc = -1; }
+        while (getchar()!='\n');
+
+        switch (opc) {
+            case 1: menuNovato(&A, &B); break;
+            case 2: menuAventureiro(&A, &B); break;
+            case 3: menuMestre(&A, &B); break;
+            case 0: puts("Encerrando..."); break;
+            default: puts("Opcao invalida."); break;
+        }
+    } while (opc != 0);
+
+    return 0;
+}
